@@ -1,0 +1,157 @@
+x-postgres-template: &postgres-template
+  image: postgres:${POSTGRES_VERSION:-16.16-bookworm}
+  environment:
+    POSTGRES_USER: ${POSTGRES_USER:-quota}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev}
+    POSTGRES_DB: ${POSTGRES_DB:-quota}
+  networks:
+    - quota-internal
+  init: true
+  shm_size: 128mb
+  stop_grace_period: 30s
+  security_opt:
+    - no-new-privileges:true
+  healthcheck:
+    test:
+      [
+        "CMD-SHELL",
+        "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+      ]
+    interval: 2s
+    timeout: 5s
+    retries: 15
+
+x-gateway-build: &gateway-build
+  context: .
+  dockerfile: build/quota-gateway/Dockerfile
+  args:
+    GOLANG_IMAGE: ${GOLANG_IMAGE:-1.26.11-bookworm}
+
+x-region-build: &region-build
+  context: .
+  dockerfile: build/region-quota-service/Dockerfile
+  args:
+    GOLANG_IMAGE: ${GOLANG_IMAGE:-1.26.11-bookworm}
+
+x-region-service-template: &region-service-template
+  build:
+    <<: *region-build
+  environment:
+    GRPC_ADDR: ":9090"
+    OTEL_SERVICE_NAME: region-quota-service
+    OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+    LOG_LEVEL: ${LOG_LEVEL:-info}
+  command:
+    [
+      "serve",
+      "--auto-migrate",
+      "--seed-demo",
+      "--dev-reaper=5s",
+    ]
+  networks:
+    - quota-internal
+  expose:
+    - "9090"
+  security_opt:
+    - no-new-privileges:true
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "/region-quota-service", "healthcheck"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+
+services:
+  postgres-a:
+    <<: *postgres-template
+    volumes:
+      - postgres-a-data:/var/lib/postgresql/data
+
+  postgres-b:
+    <<: *postgres-template
+    volumes:
+      - postgres-b-data:/var/lib/postgresql/data
+
+  postgres-c:
+    <<: *postgres-template
+    volumes:
+      - postgres-c-data:/var/lib/postgresql/data
+
+  region-quota-service-a:
+    <<: *region-service-template
+    environment:
+      REGION_ID: ir-thr-1
+      DATABASE_URL: postgres://${POSTGRES_USER:-quota}:${POSTGRES_PASSWORD:-dev}@postgres-a:5432/${POSTGRES_DB:-quota}?sslmode=disable
+      GRPC_ADDR: ":9090"
+      OTEL_SERVICE_NAME: region-quota-service
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres-a:
+        condition: service_healthy
+
+  region-quota-service-b:
+    <<: *region-service-template
+    environment:
+      REGION_ID: ir-thr-2
+      DATABASE_URL: postgres://${POSTGRES_USER:-quota}:${POSTGRES_PASSWORD:-dev}@postgres-b:5432/${POSTGRES_DB:-quota}?sslmode=disable
+      GRPC_ADDR: ":9090"
+      OTEL_SERVICE_NAME: region-quota-service
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres-b:
+        condition: service_healthy
+
+  region-quota-service-c:
+    <<: *region-service-template
+    environment:
+      REGION_ID: ir-tbz-1
+      DATABASE_URL: postgres://${POSTGRES_USER:-quota}:${POSTGRES_PASSWORD:-dev}@postgres-c:5432/${POSTGRES_DB:-quota}?sslmode=disable
+      GRPC_ADDR: ":9090"
+      OTEL_SERVICE_NAME: region-quota-service
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres-c:
+        condition: service_healthy
+
+  quota-api-gateway:
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
+    build:
+      <<: *gateway-build
+    environment:
+      HTTP_ADDR: ":8080"
+      OPS_ADDR: ":8081"
+      OTEL_SERVICE_NAME: quota-gateway
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      REGIONS: ir-thr-1=region-quota-service-a:9090,ir-thr-2=region-quota-service-b:9090,ir-tbz-1=region-quota-service-c:9090
+    expose:
+      - "8081"
+    healthcheck:
+      test: ["CMD", "/quota-gateway", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - quota-internal
+      - quota-edge
+    depends_on:
+      region-quota-service-a:
+        condition: service_healthy
+      region-quota-service-b:
+        condition: service_healthy
+      region-quota-service-c:
+        condition: service_healthy
+
+volumes:
+  postgres-a-data:
+  postgres-b-data:
+  postgres-c-data:

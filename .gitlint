@@ -1,0 +1,5 @@
+[general]
+contrib=contrib-title-conventional-commits
+ignore=body-is-missing,T3
+
+[contrib-title-conventional-commits]

@@ -1,0 +1,5 @@
+.git
+docs
+*.md
+!internal/region/postgres/migrations
+test

@@ -1,0 +1,157 @@
+name: quota-challenge
+
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:-quota}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev}
+  POSTGRES_DB: ${POSTGRES_DB:-quota}
+
+x-gateway-build: &gateway-build
+  # Context is repo root (see Makefile COMPOSE --project-directory).
+  context: .
+  dockerfile: build/quota-gateway/Dockerfile
+  args:
+    GOLANG_IMAGE: ${GOLANG_IMAGE:-1.26.11-bookworm}
+
+x-region-build: &region-build
+  context: .
+  dockerfile: build/region-quota-service/Dockerfile
+  args:
+    GOLANG_IMAGE: ${GOLANG_IMAGE:-1.26.11-bookworm}
+
+services:
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-16.16-bookworm}
+    environment:
+      <<: *postgres-env
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - quota-internal
+    init: true
+    shm_size: 128mb
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
+        ]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  region-quota-service:
+    build:
+      <<: *region-build
+    environment:
+      REGION_ID: ${REGION_ID:?set REGION_ID in .env — see .env.example}
+      GRPC_ADDR: ":9090"
+      DATABASE_URL: postgres://${POSTGRES_USER:-quota}:${POSTGRES_PASSWORD:-dev}@postgres:5432/${POSTGRES_DB:-quota}?sslmode=disable
+      OTEL_SERVICE_NAME: region-quota-service
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    command:
+      [
+        "serve",
+        "--auto-migrate",
+        "--seed-demo",
+        "--dev-reaper=5s",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - quota-internal
+    expose:
+      - "9090"
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "/region-quota-service", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION:-0.114.0}
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - ./configs/otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    networks:
+      - quota-internal
+    expose:
+      - "4317"
+      - "4318"
+      - "8889"
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v2.55.1}
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${METRICS_BIND:-127.0.0.1}:${PROMETHEUS_PORT:-9091}:9090"
+    depends_on:
+      - otel-collector
+      - quota-api-gateway
+    networks:
+      - quota-internal
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+
+  quota-api-gateway:
+    build:
+      <<: *gateway-build
+    environment:
+      HTTP_ADDR: ":8080"
+      OPS_ADDR: ":8081"
+      REGIONS: ${GATEWAY_REGIONS:-ir-thr-1=region-quota-service:9090}
+      OTEL_SERVICE_NAME: quota-gateway
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    ports:
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
+    expose:
+      - "8081"
+    depends_on:
+      region-quota-service:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    networks:
+      - quota-internal
+      - quota-edge
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    healthcheck:
+      test: ["CMD", "/quota-gateway", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+networks:
+  quota-internal:
+    driver: bridge
+    internal: true
+  quota-edge:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  prometheus-data:

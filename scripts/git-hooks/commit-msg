@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+if ! command -v gitlint >/dev/null 2>&1; then
+  echo "commit-msg: gitlint not found (pip install gitlint==0.19.1; pin in versions.env)" >&2
+  exit 1
+fi
+exec gitlint --ignore=body-is-missing --msg-filename "$1"

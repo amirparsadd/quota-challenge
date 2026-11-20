@@ -1,0 +1,9 @@
+.DS_Store
+.env
+*.test
+/bin/
+/vendor/
+
+# Local Python venvs (gitlint, tooling)
+.venv/
+.venv-*/

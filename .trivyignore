@@ -1,0 +1,3 @@
+# Transitive via testcontainers (integration/e2e only; not in production binaries).
+CVE-2024-25621
+CVE-2026-53488

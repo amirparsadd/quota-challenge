@@ -1,0 +1,254 @@
+syntax = "proto3";
+
+package regionquota.v1;
+
+option go_package = "quota-challenge/api/gen/regionquota/v1;regionquotav1";
+
+service CapacityInternal {
+  rpc Reserve(ReserveRequest) returns (ReserveResponse);
+  rpc Confirm(ConfirmRequest) returns (ServiceResponse);
+  rpc Cancel(CancelRequest) returns (ServiceResponse);
+  rpc Release(ReleaseRequest) returns (ServiceResponse);
+  rpc GetService(GetServiceRequest) returns (ServiceResponse);
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  rpc GetAvailability(GetAvailabilityRequest) returns (AvailabilityResponse);
+  rpc GetQuota(GetQuotaRequest) returns (QuotaResponse);
+  rpc ListProducts(ListProductsRequest) returns (ListProductsResponse);
+  rpc ListServiceEvents(ListServiceEventsRequest) returns (ListServiceEventsResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+service CapacityAdmin {
+  rpc SetPoolCapacity(SetPoolCapacityRequest) returns (PoolResponse);
+  rpc SetCustomerQuota(SetCustomerQuotaRequest) returns (QuotaEntryResponse);
+  rpc GetPool(GetPoolRequest) returns (PoolResponse);
+  rpc ResyncCounters(ResyncCountersRequest) returns (ResyncCountersResponse);
+  rpc ExpireServices(ExpireServicesRequest) returns (ExpireServicesResponse);
+}
+
+message ResourceLine {
+  string resource = 1;
+  int64 amount = 2;
+  string unit = 3;
+}
+
+message ReserveRequest {
+  string customer_id = 1;
+  string idempotency_key = 2;
+  string request_hash = 3;
+  string product = 4;
+  repeated ResourceLine items = 5;
+  optional int64 ttl_seconds = 6; // absent => product default; 0 => active immediately
+}
+
+message ReserveResponse {
+  Service service = 1;
+  bool replayed = 2;
+  bool rejection_replay = 3;
+  int32 http_status = 4;
+  string problem_json = 5;
+}
+
+message ConfirmRequest {
+  string customer_id = 1;
+  string service_id = 2;
+}
+
+message CancelRequest {
+  string customer_id = 1;
+  string service_id = 2;
+}
+
+message ReleaseRequest {
+  string service_id = 1;
+}
+
+message GetServiceRequest {
+  string customer_id = 1;
+  string service_id = 2;
+}
+
+message ListServiceEventsRequest {
+  string customer_id = 1;
+  string service_id = 2;
+}
+
+message ServiceEvent {
+  int64 id = 1;
+  string event_type = 2;
+  string at = 3; // RFC3339
+}
+
+message ListServiceEventsResponse {
+  repeated ServiceEvent events = 1;
+}
+
+message ListServicesRequest {
+  string customer_id = 1;
+}
+
+message ListServicesResponse {
+  repeated Service services = 1;
+}
+
+message GetAvailabilityRequest {
+  string customer_id = 1;
+  optional string product = 2;
+}
+
+message AvailabilityResponse {
+  repeated AvailabilityEntry entries = 1;
+}
+
+message AvailabilityEntry {
+  string resource = 1;
+  string unit = 2;
+  int64 pool_remaining = 3;
+  int64 quota_remaining = 4;
+}
+
+message GetQuotaRequest {
+  string customer_id = 1;
+}
+
+message QuotaResponse {
+  repeated QuotaEntry entries = 1;
+}
+
+message QuotaEntry {
+  string resource = 1;
+  string unit = 2;
+  optional int64 limit = 3;
+  int64 allocated = 4;
+  int64 reserved = 5;
+  optional int64 remaining = 6;
+  bool provisioned = 7;
+}
+
+message ProductResource {
+  string resource = 1;
+  string unit = 2;
+  int64 min_amount = 3;
+  int64 step_amount = 4;
+}
+
+message Product {
+  string name = 1;
+  int32 default_ttl_seconds = 2;
+  int32 max_ttl_seconds = 3;
+  repeated ProductResource resources = 4;
+}
+
+message ListProductsRequest {}
+
+message ListProductsResponse {
+  repeated Product products = 1;
+}
+
+message RegionAvailabilityView {
+  string region = 1;
+  repeated AvailabilityEntry entries = 2;
+}
+
+message FanoutAvailabilityResponse {
+  repeated RegionAvailabilityView regions = 1;
+  bool partial = 2;
+  repeated string unavailable_regions = 3;
+}
+
+message RegionQuotaView {
+  string region = 1;
+  repeated QuotaEntry entries = 2;
+}
+
+message FanoutQuotaResponse {
+  repeated RegionQuotaView regions = 1;
+  bool partial = 2;
+  repeated string unavailable_regions = 3;
+}
+
+message RegionServicesView {
+  string region = 1;
+  repeated Service services = 2;
+}
+
+message FanoutServicesResponse {
+  repeated RegionServicesView regions = 1;
+  bool partial = 2;
+  repeated string unavailable_regions = 3;
+}
+
+message RegionProductsView {
+  string region = 1;
+  repeated Product products = 2;
+}
+
+message FanoutProductsResponse {
+  repeated RegionProductsView regions = 1;
+  bool partial = 2;
+  repeated string unavailable_regions = 3;
+}
+
+message Service {
+  string id = 1;
+  string customer_id = 2;
+  string product = 3;
+  string state = 4;
+  repeated ResourceLine items = 5;
+  optional int64 expires_at_unix = 6;
+  string created_at = 7;
+  string updated_at = 8;
+}
+
+message ServiceResponse {
+  Service service = 1;
+}
+
+message SetPoolCapacityRequest {
+  string resource = 1;
+  int64 total = 2;
+}
+
+message SetCustomerQuotaRequest {
+  string customer_id = 1;
+  string resource = 2;
+  int64 limit = 3;
+}
+
+message GetPoolRequest {
+  string resource = 1;
+}
+
+message PoolResponse {
+  string resource = 1;
+  int64 total = 2;
+  int64 baseline_allocated = 3;
+  int64 allocated = 4;
+  int64 reserved = 5;
+}
+
+message QuotaEntryResponse {
+  QuotaEntry entry = 1;
+}
+
+message ResyncCountersRequest {
+  bool apply = 1;
+}
+
+message ResyncCountersResponse {
+  int64 drift = 1;
+  bool applied = 2;
+}
+
+message ExpireServicesRequest {}
+
+message ExpireServicesResponse {
+  int64 expired_count = 1;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string region_id = 2;
+}

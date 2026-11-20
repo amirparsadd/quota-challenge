@@ -1,0 +1,58 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install tooling
+        run: |
+          set -a && source versions.env && set +a
+          go install github.com/bufbuild/buf/cmd/buf@${BUF_VERSION}
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@${PROTOC_GEN_GO_VERSION}
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@${PROTOC_GEN_GO_GRPC_VERSION}
+          go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
+
+      - name: Generate protobuf
+        run: |
+          go mod download
+          buf generate
+
+      - name: Lint
+        run: make lint
+
+      - name: Unit and integration tests
+        run: make test
+
+  e2e:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: End-to-end tests (Compose)
+        env:
+          OTEL_SDK_DISABLED: "true"
+          # Base compose merges with multiregion; single-region service still requires REGION_ID at parse time.
+          REGION_ID: ir-thr-1
+        run: |
+          set -a && source versions.env && set +a
+          go mod download
+          docker compose version
+          make test-e2e

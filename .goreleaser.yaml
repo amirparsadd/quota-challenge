@@ -1,0 +1,61 @@
+version: 2
+project_name: quota-challenge
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: quota-gateway
+    main: ./cmd/quota-gateway
+    binary: quota-gateway
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags: &build_ldflags
+      - -s -w
+      - -X quota-challenge/internal/buildinfo.Version={{.Version}}
+      - -X quota-challenge/internal/buildinfo.Commit={{.Commit}}
+
+  - id: region-quota-service
+    main: ./cmd/region-quota-service
+    binary: region-quota-service
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags: *build_ldflags
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  github:
+    owner: amirparsadd
+    name: quota-challenge
